@@ -1,0 +1,70 @@
+- name: openvpn config ras
+  hosts: ras
+  become: yes
+#  vars:
+#    linkmode: tun
+  tasks:
+    - name: update
+      apt:
+        update_cache=yes
+      tags:
+        - update apt
+
+    - name: Install tools
+      apt:
+        name: 
+          - openvpn
+          - easy-rsa
+        state: present
+        update_cache: true
+
+    - name: generating keys and certificates
+      ansible.builtin.shell: |
+        cd /etc/openvpn
+        echo 'yes' | /usr/share/easy-rsa/easyrsa init-pki
+        echo 'rasvpn' | /usr/share/easy-rsa/easyrsa gen-req server nopass
+        echo 'yes' | /usr/share/easy-rsa/easyrsa build-ca nopass
+        echo 'yes' | /usr/share/easy-rsa/easyrsa sign-req server server 
+        /usr/share/easy-rsa/easyrsa gen-dh
+        openvpn --genkey secret ca.key
+        echo 'client' | /usr/share/easy-rsa/easyrsa gen-req client nopass
+        echo 'yes' | /usr/share/easy-rsa/easyrsa sign-req client client
+        echo 'iroute 10.10.10.0 255.255.255.0' > /etc/openvpn/client/client
+
+    - name: Copy server config file
+      template:
+        remote_src: false
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      with_items:
+        - { src: "ansible/templates/server_ras.conf", dest: "/etc/openvpn/server.conf", mode: "0644" }
+        - { src: "ansible/templates/openvpn@.service", dest: "/etc/systemd/system/openvpn@.service", mode: "0644" }
+
+    - name: Copy key file
+      fetch:
+        src: /etc/openvpn/pki/ca.crt
+        dest: ./
+        flat: yes
+    - name: Copy key file
+      fetch:
+        src: /etc/openvpn/pki/issued/client.crt
+        dest: ./
+        flat: yes
+    - name: Copy key file
+      fetch:
+        src: /etc/openvpn/pki/private/client.key
+        dest: ./
+        flat: yes
+
+    - name: Enabled openvpn service
+      service:
+        name: openvpn
+        state: started
+        enabled: true
+
+    - name: restart hosts
+      reboot:
+        reboot_timeout: 200
